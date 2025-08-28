@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Real-Time Chat with Typing Indicator</title>
+  <script src="https://cdn.jsdelivr.net/npm/sockjs-client@1/dist/sockjs.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/stomp.js/2.3.1/stomp.min.js"></script>
+  
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      background: linear-gradient(135deg, #c3eaff, #d9c2ff);
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      height: 100vh;
+      margin: 0;
+    }
+    .chat-container {
+      background: white;
+      width: 400px;
+      border-radius: 15px;
+      box-shadow: 0 8px 20px rgba(0, 0, 0, 0.2);
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+    .chat-header {
+      background: #6b46c1;
+      color: white;
+      padding: 15px;
+      text-align: center;
+      font-size: 1.5em;
+      font-weight: bold;
+    }
+    .chat-box {
+      flex: none;
+      padding: 15px;
+      background: #f9f9f9;
+      height: 320px;
+      overflow-y: auto;
+      border-bottom: 1px solid #ddd;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .typing-indicator {
+      font-size: 0.85em;
+      color: #555;
+      padding: 5px 10px;
+      font-style: italic;
+    }
+    .message {
+      padding: 10px;
+      border-radius: 10px;
+      font-size: 0.9em;
+      word-wrap: break-word;
+      max-width: 70%;
+    }
+    .my-message {
+      background: #6b46c1;
+      color: white;
+      align-self: flex-end;
+      text-align: right;
+    }
+    .other-message {
+      background: #e9e9eb;
+      color: #333;
+      align-self: flex-start;
+      text-align: left;
+    }
+    .chat-input {
+      display: flex;
+      flex-direction: column;
+      padding: 10px;
+      background: #f1f1f1;
+      gap: 8px;
+    }
+    .chat-input input[type="text"],
+    .chat-input textarea {
+      padding: 10px;
+      border: 1px solid #ccc;
+      border-radius: 8px;
+      font-size: 0.9em;
+      resize: none;
+    }
+    .send-section {
+      display: flex;
+      gap: 5px;
+    }
+    .send-section textarea {
+      flex: 1;
+      min-height: 40px;
+      max-height: 100px;
+      overflow-y: auto;
+    }
+    .send-btn {
+      background: #6b46c1;
+      color: white;
+      border: none;
+      padding: 10px 15px;
+      border-radius: 8px;
+      cursor: pointer;
+      font-weight: bold;
+      display: flex;
+      align-items: center;
+      gap: 5px;
+    }
+    .send-btn:hover {
+      background: #553c9a;
+    }
+  </style>
+</head>
+<body>
+  <div class="chat-container">
+    <div class="chat-header">Simple Chat</div>
+    <div class="chat-box" id="chatBox">
+      <p style="color: #aaa; text-align:center;">No messages yet...</p>
+    </div>
+    <div id="typingIndicator" class="typing-indicator" style="display:none;"></div>
+    <div class="chat-input">
+      <input type="text" id="nameInput" placeholder="Enter your name">
+      <div class="send-section">
+        <textarea id="messageInput" placeholder="Type your message..." 
+          onkeydown="handleKey(event)" 
+          oninput="sendTyping()"></textarea>
+        <button class="send-btn" id="sendBtn" onclick="sendMessage()">➤ Send</button>
+      </div>
+    </div>
+  </div>
+</body>
+<script>
+let stompClient = null;
+let isConnected = false;
+let typingTimeout;
+
+function setConnected(connected) {
+    isConnected = connected;
+    document.getElementById('sendBtn').disabled = !connected;
+    document.getElementById('nameInput').disabled = connected;
+    document.getElementById('messageInput').disabled = !connected;
+}
+
+function connect(callback) {
+    var socket = new SockJS("/chat");
+    stompClient = Stomp.over(socket);
+
+    stompClient.connect({}, function(frame) {
+        console.log("Connected: " + frame);
+        setConnected(true);
+
+        stompClient.subscribe('/topic/messages', function(message) {
+            showMessage(JSON.parse(message.body));
+        });
+
+        stompClient.subscribe('/topic/typing', function(typingData) {
+            showTyping(JSON.parse(typingData.body));
+        });
+
+        if (callback) callback();
+    }, function(error) {
+        console.error("Connection error: " + error);
+        setConnected(false);
+    });
+}
+
+function showMessage(message) {
+    const chatBox = document.getElementById('chatBox');
+    const initialMessage = chatBox.querySelector('p');
+    if (initialMessage) initialMessage.remove();
+
+    const messageElement = document.createElement('div');
+    messageElement.classList.add('message');
+
+    const userName = document.getElementById('nameInput').value;
+    if (message.sender === userName) {
+        messageElement.classList.add('my-message');
+    } else {
+        messageElement.classList.add('other-message');
+    }
+
+    messageElement.innerHTML = `<strong>${message.sender}:</strong> ${message.content}`;
+    chatBox.appendChild(messageElement);
+    chatBox.scrollTop = chatBox.scrollHeight;
+}
+
+function showTyping(data) {
+    const currentUser = document.getElementById('nameInput').value;
+    const indicator = document.getElementById('typingIndicator');
+
+    if (data.sender !== currentUser) {
+        indicator.style.display = data.typing ? 'block' : 'none';
+        indicator.textContent = `${data.sender} is typing...`;
+    }
+}
+
+function sendMessage() {
+    const sender = document.getElementById('nameInput').value.trim();
+    const content = document.getElementById('messageInput').value.trim();
+
+    if (!sender) {
+        alert("Enter your name first!");
+        return;
+    }
+
+    if (content === '') return;
+
+    if (!isConnected) {
+        connect(() => sendMessage());
+        return;
+    }
+
+    stompClient.send("/app/sendMessage", {}, JSON.stringify({
+        sender: sender,
+        content: content
+    }));
+
+    stompClient.send("/app/typing", {}, JSON.stringify({
+        sender: sender,
+        typing: false
+    }));
+
+    document.getElementById('messageInput').value = '';
+}
+
+function sendTyping() {
+    const sender = document.getElementById('nameInput').value.trim();
+    if (!sender || !isConnected) return;
+
+    stompClient.send("/app/typing", {}, JSON.stringify({
+        sender: sender,
+        typing: true
+    }));
+
+    clearTimeout(typingTimeout);
+    typingTimeout = setTimeout(() => {
+        stompClient.send("/app/typing", {}, JSON.stringify({
+            sender: sender,
+            typing: false
+        }));
+    }, 2000);
+}
+
+function handleKey(event) {
+    if (event.key === 'Enter' && !event.shiftKey) {
+        event.preventDefault();
+        sendMessage();
+    }
+}
+</script>
+</html>
